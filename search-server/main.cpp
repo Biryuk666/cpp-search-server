@@ -130,7 +130,7 @@ private:
     }
 
     vector<Document> FindAllDocuments(const Query& query_words) const {
-        ector<Document> matched_documents;
+        vector<Document> matched_documents;
         map<int, double> document_to_relevance;
         
         if (!query_words.plus_words.empty() || !document_to_relevance.empty()) {
