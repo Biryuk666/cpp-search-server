@@ -65,8 +65,8 @@ public:
         const vector<string> document_words = SplitIntoWordsNoStop(document);
 
         for (const string& word : document_words) {
-            double tf = static_cast<double>(count(document_words.begin(), document_words.end(), word)) / document_words.size();
-            word_to_document_freqs_[word].insert({document_id, tf});
+            double tf = (1. / document_words.size());
+            word_to_document_freqs_[word][document_id] += tf;
         }
 
         ++document_count_;
@@ -128,22 +128,23 @@ private:
 
         return query_words;
     }
+    double IDF(const string& query_word) const {
+        return log(static_cast<double>(document_count_) / word_to_document_freqs_.at(query_word).size());
+    }
 
     vector<Document> FindAllDocuments(const Query& query_words) const {
         vector<Document> matched_documents;
         map<int, double> document_to_relevance;
         
-        if (!query_words.plus_words.empty() || !document_to_relevance.empty()) {
-            for (const string& query_word : query_words.plus_words) {
-                if (word_to_document_freqs_.count(query_word) != 0 && query_words.minus_words.count(query_word) == 0) {
-                    double idf = log(document_count_ / static_cast<double>(word_to_document_freqs_.at(query_word).size()));
-                    for (const auto& [document_id, tf] : word_to_document_freqs_.at(query_word)) {
-                        document_to_relevance[document_id] += tf * idf;
-                    }
+        
+
+        for (const string& query_word : query_words.plus_words) {
+            if (word_to_document_freqs_.count(query_word) != 0 && query_words.minus_words.count(query_word) == 0) {
+                const double& idf = IDF(query_word);
+                for (const auto& [document_id, tf] : word_to_document_freqs_.at(query_word)) {
+                    document_to_relevance[document_id] += tf * idf;
                 }
             }
-        } else {
-            return {};
         }
  
         for (const auto& [id, relevance] : document_to_relevance) {
