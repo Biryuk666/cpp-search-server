@@ -136,7 +136,9 @@ private:
         vector<Document> matched_documents;
         map<int, double> document_to_relevance;
         
-        
+        if (query_words.plus_words.empty() || word_to_document_freqs_.empty()) {
+            return {};
+        }
 
         for (const string& query_word : query_words.plus_words) {
             if (word_to_document_freqs_.count(query_word) != 0 && query_words.minus_words.count(query_word) == 0) {
