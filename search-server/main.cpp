@@ -86,22 +86,18 @@ public:
     explicit SearchServer(const StringContainer& stop_words)
         : stop_words_(MakeUniqueNonEmptyStrings(stop_words))
     {
-        for (const auto& word : stop_words_) {
+        all_of(stop_words_.begin(), stop_words_.end(), [](const string& word) {
             if (!IsValidWord(word)) {
                 throw invalid_argument("Words should not contain special characters"s);
             }
-        }
+            return true;
+        });
     }
 
     explicit SearchServer(const string& stop_words_text)
         : SearchServer(
             SplitIntoWords(stop_words_text))
     {
-        for (const auto& word : stop_words_) {
-            if (!IsValidWord(word)) {
-                throw invalid_argument("Words should not contain special characters"s);
-            }
-        }
     }
 
     void AddDocument(int document_id, const string& document, DocumentStatus status,
@@ -120,6 +116,7 @@ public:
         }
         
         documents_.emplace(document_id, DocumentData{ComputeAverageRating(ratings), status});
+        documents_index.push_back(document_id);
     }
 
     template <typename DocumentPredicate>
@@ -168,10 +165,6 @@ public:
         const Query query = ParseQuery(raw_query);
         vector<string> matched_words;
         for (const string& word : query.plus_words) {
-            if (!IsValidQuery(word)) {
-                throw invalid_argument("Words should not contain special characters and the query should not be empty"s);
-            }
-
             if (word_to_document_freqs_.count(word) == 0) {
                 continue;
             }
@@ -181,10 +174,6 @@ public:
         }
         
         for (const string& word : query.minus_words) {
-            if (!IsValidQuery(word)) {
-                throw invalid_argument("Words should not contain special characters and the query should not be empty. The request text should not contain more than one '-' in a row"s);
-            }
-            
             if (word_to_document_freqs_.count(word) == 0) {
                 continue;
             }
@@ -199,9 +188,7 @@ public:
     
     int GetDocumentId(int index) const {
         if (0 <= index && index < static_cast<int>(documents_.size())) {
-            auto it = documents_.begin();
-            advance(it, index);
-            return it->first;
+            return documents_index[index];
         }
 
         throw out_of_range("The Document ID are outside the acceptable range"s);
@@ -215,6 +202,7 @@ private:
     const set<string> stop_words_;
     map<string, map<int, double>> word_to_document_freqs_;
     map<int, DocumentData> documents_;
+    vector<int> documents_index;
 
     bool IsStopWord(const string& word) const {
         return stop_words_.count(word) > 0;
@@ -254,6 +242,9 @@ private:
             is_minus = true;
             text = text.substr(1);
         }
+        if (!IsValidQuery(text)) {
+                throw invalid_argument("Words should not contain special characters. The query should not end with '-' and should not contain more than one '-' in a row"s);
+            }
         return {text, is_minus, IsStopWord(text)};
     }
 
