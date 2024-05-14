@@ -2,8 +2,6 @@
 #include <iostream>
 #include <vector>
 
-
-
 template <typename It>
 class IteratorRange {
     public:
@@ -12,27 +10,22 @@ class IteratorRange {
         {
         }
 
-    auto begin() { 
-        return begin_;
-    }
-    auto end() {
-        return end_;
-    }
+        auto begin() { 
+            return begin_;
+        }
+        auto end() {
+            return end_;
+        }
 
-    auto size() {
-        return size_;
-    }
-
-   
+        auto size() {
+            return size_;
+        } 
 
     private:
-
-    It begin_;
-    It end_;
-    int size_;
+        It begin_;
+        It end_;
+        int size_;
 };
-
-
 
 template <typename Iterator>
 std::ostream& operator << (std::ostream& out, IteratorRange<Iterator> iterator) {
@@ -67,9 +60,6 @@ class Paginator {
                     pages_.push_back(iterator_range);
                     begin += page_size;
                 }
-                
-                
-
             }
         }
     
@@ -82,11 +72,9 @@ class Paginator {
         }
     
     private:
-    std::vector<IteratorRange<Iterator>> pages_;
-    int number_of_page_;
-    
-
-}; 
+        std::vector<IteratorRange<Iterator>> pages_;
+        int number_of_page_;
+};
 
 template <typename Container>
 auto Paginate(const Container& c, size_t page_size) {
