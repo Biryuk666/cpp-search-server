@@ -3,8 +3,30 @@
 using namespace std;
 
 SearchServer::SearchServer(const std::string& stop_words_text)
-    : SearchServer(SplitIntoWords(stop_words_text))
-{
+    : SearchServer(SplitIntoWords(stop_words_text)) {}
+
+SearchServer::Iterator SearchServer::begin() {
+    return document_ids_.begin();
+}
+
+SearchServer::Iterator SearchServer::end() {
+    return document_ids_.end();
+}
+
+SearchServer::ConstIterator SearchServer::begin() const {
+    return cbegin();
+}
+
+SearchServer::ConstIterator SearchServer::end() const {
+    return cend();
+}
+
+SearchServer::ConstIterator SearchServer::cbegin() const {
+    return document_ids_.begin();
+}
+
+SearchServer::ConstIterator SearchServer::cend() const {
+    return document_ids_.end();
 }
 
 void SearchServer::AddDocument(int document_id, const string& document, DocumentStatus status, const vector<int>& ratings) {
@@ -16,6 +38,7 @@ void SearchServer::AddDocument(int document_id, const string& document, Document
         const double inv_word_count = 1.0 / static_cast<double>(words.size());
         for (const string& word : words) {
             word_to_document_freqs_[word][document_id] += inv_word_count;
+            id_to_word_freqs_[document_id][word] += inv_word_count;
         }
         documents_.emplace(document_id, DocumentData{ComputeAverageRating(ratings), status});
         document_ids_.push_back(document_id);
@@ -64,6 +87,30 @@ tuple<vector<string>, DocumentStatus> SearchServer::MatchDocument(const string& 
     return {matched_words, documents_.at(document_id).status};
 }
 
+const map<string, double>& SearchServer::GetWordFrequencies(int document_id) const {
+    auto it = id_to_word_freqs_.find(document_id);
+    if (it != id_to_word_freqs_.end()) {
+        return it->second;
+    }
+
+    return empty_map;
+}
+
+void SearchServer::RemoveDocument(int document_id) {
+    auto it = id_to_word_freqs_.find(document_id);
+    if (it == id_to_word_freqs_.end()) return;
+    
+    for (auto [word, frequency] : it->second) {
+        word_to_document_freqs_.at(word).erase(document_id);
+    }
+
+    id_to_word_freqs_.erase(document_id);
+    documents_.erase(document_id);
+
+    auto iterator = find(begin(), end(), document_id);
+    document_ids_.erase(iterator);
+}
+
 bool SearchServer::IsStopWord(const string& word) const {
     return stop_words_.count(word) > 0;
 }
@@ -99,18 +146,37 @@ int SearchServer::ComputeAverageRating(const vector<int>& ratings) {
 }
 
 SearchServer::QueryWord SearchServer::ParseQueryWord(const std::string& text) const {
-            if (text.empty()) {
-                throw std::invalid_argument("Query word is empty"s);
-            }
-            std::string word = text;
-            bool is_minus = false;
-            if (word[0] == '-') {
-                is_minus = true;
-                word = word.substr(1);
-            }
-            if (word.empty() || word[0] == '-' || !IsValidWord(word)) {
-                throw std::invalid_argument("Query word "s + text + " is invalid");
-            }
+    if (text.empty()) {
+        throw std::invalid_argument("Query word is empty"s);
+    }
+    std::string word = text;
+    bool is_minus = false;
+    if (word[0] == '-') {
+        is_minus = true;
+        word = word.substr(1);
+    }
+    if (word.empty() || word[0] == '-' || !IsValidWord(word)) {
+        throw std::invalid_argument("Query word "s + text + " is invalid");
+    }
 
-            return {word, is_minus, IsStopWord(word)};
+    return {word, is_minus, IsStopWord(word)};
+}
+
+SearchServer::Query SearchServer::ParseQuery(const std::string& text) const {
+    Query result;
+    for (const std::string& word : SplitIntoWords(text)) {
+        const auto query_word = ParseQueryWord(word);
+        if (!query_word.is_stop) {
+            if (query_word.is_minus) {
+                result.minus_words.insert(query_word.data);
+            } else {
+                result.plus_words.insert(query_word.data);
+            }
         }
+    }
+    return result;
+}
+
+double SearchServer::ComputeWordInverseDocumentFreq(const std::string& word) const {
+    return log(GetDocumentCount() * 1.0 / static_cast<double>(word_to_document_freqs_.at(word).size()));
+}

@@ -4,8 +4,8 @@ using namespace std;
 
 Document::Document() = default;
 
-Document::Document(int id, double relevance, int rating)
-    : id(id), relevance(relevance), rating(rating)
+Document::Document(int id_, double relevance_, int rating_)
+    : id(id_), relevance(relevance_), rating(rating_)
 {
 }
 
