@@ -1,9 +1,14 @@
 #include "search_server.h"
 
+#include <stdexcept>
+
 using namespace std;
 
-SearchServer::SearchServer(const std::string& stop_words_text)
+SearchServer::SearchServer(const string& stop_words_text)
     : SearchServer(SplitIntoWords(stop_words_text)) {}
+
+SearchServer::SearchServer(string_view stop_words_text)
+    : SearchServer(SplitIntoWords(stop_words_text.data())) {}
 
 SearchServer::Iterator SearchServer::begin() {
     return document_ids_.begin();
@@ -29,11 +34,11 @@ SearchServer::ConstIterator SearchServer::cend() const {
     return document_ids_.end();
 }
 
-void SearchServer::AddDocument(int document_id, const string& document, DocumentStatus status, const vector<int>& ratings) {
+void SearchServer::AddDocument(int document_id, string_view document, DocumentStatus status, const vector<int>& ratings) {
         if ((document_id < 0) || (documents_.count(document_id) > 0)) {
             throw invalid_argument("Invalid document_id"s);
         }
-        const auto words = SplitIntoWordsNoStop(document);
+        const auto words = SplitIntoWordsNoStop(document.data());
 
         const double inv_word_count = 1.0 / static_cast<double>(words.size());
         for (const string& word : words) {
@@ -44,14 +49,14 @@ void SearchServer::AddDocument(int document_id, const string& document, Document
         document_ids_.push_back(document_id);
 }
 
-vector<Document> SearchServer::FindTopDocuments(const string& raw_query, DocumentStatus status) const {
+vector<Document> SearchServer::FindTopDocuments(string_view raw_query, DocumentStatus status) const {
         return SearchServer::FindTopDocuments(
             raw_query, [status](int document_id, DocumentStatus document_status, int rating) {
                 return document_status == status;
             });
 }
 
-vector<Document> SearchServer::FindTopDocuments(const string& raw_query) const {
+vector<Document> SearchServer::FindTopDocuments(string_view raw_query) const {
         return SearchServer::FindTopDocuments(raw_query, DocumentStatus::ACTUAL);
 }
 
@@ -63,10 +68,13 @@ vector<Document> SearchServer::FindTopDocuments(const string& raw_query) const {
         return document_ids_.at(static_cast<size_t>(index));
 }
 
-tuple<vector<string>, DocumentStatus> SearchServer::MatchDocument(const string& raw_query, int document_id) const {
-    const auto query = ParseQuery(raw_query);
+tuple<vector<string_view>, DocumentStatus> SearchServer::MatchDocument(string_view raw_query, int document_id) const {
+    if (id_to_word_freqs_.find(document_id) == id_to_word_freqs_.end()) {
+        throw out_of_range("Invalid document id"s);
+    }
+    const auto query = ParseQuery(raw_query.data());
 
-    vector<string> matched_words;
+    vector<string_view> matched_words;
     for (const string& word : query.plus_words) {
         if (word_to_document_freqs_.count(word) == 0) {
             continue;
@@ -75,6 +83,7 @@ tuple<vector<string>, DocumentStatus> SearchServer::MatchDocument(const string& 
             matched_words.push_back(word);
         }
     }
+
     for (const string& word : query.minus_words) {
         if (word_to_document_freqs_.count(word) == 0) {
             continue;
@@ -84,10 +93,40 @@ tuple<vector<string>, DocumentStatus> SearchServer::MatchDocument(const string& 
             break;
         }
     }
+
     return {matched_words, documents_.at(document_id).status};
 }
 
-const map<string, double>& SearchServer::GetWordFrequencies(int document_id) const {
+tuple<vector<string_view>, DocumentStatus> SearchServer::MatchDocument(execution::sequenced_policy, string_view raw_query, int document_id) const {
+    return MatchDocument(raw_query, document_id);
+}
+
+tuple<vector<string_view>, DocumentStatus> SearchServer::MatchDocument(execution::parallel_policy, string_view raw_query, int document_id) const {
+    if (id_to_word_freqs_.find(document_id) == id_to_word_freqs_.end()) {
+        throw out_of_range("Invalid document id"s);
+    }
+    const auto query = ParseQuery(raw_query.data());
+
+    vector<string_view> matched_words;
+    for_each (execution::par, query.plus_words.begin(), query.plus_words.end(), [&](const auto& word) {
+        auto it = word_to_document_freqs_.find(word);
+        if (it != word_to_document_freqs_.end() && it->second.find(document_id) != it->second.end()) {
+            matched_words.push_back(word);
+        }
+    });
+
+    for_each (execution::par, query.minus_words.begin(), query.minus_words.end(), [&](const auto& word) {
+        auto it = word_to_document_freqs_.find(word);
+        if (it != word_to_document_freqs_.end() && it->second.find(document_id) != it->second.end()) {
+            matched_words.clear();
+        }
+    });
+
+    return {matched_words, documents_.at(document_id).status};
+}
+
+const map<string_view, double>& SearchServer::GetWordFrequencies(int document_id) const {
+    static map<string_view, double> empty_map;    
     auto it = id_to_word_freqs_.find(document_id);
     if (it != id_to_word_freqs_.end()) {
         return it->second;
@@ -101,13 +140,32 @@ void SearchServer::RemoveDocument(int document_id) {
     if (it == id_to_word_freqs_.end()) return;
     
     for (auto [word, frequency] : it->second) {
-        word_to_document_freqs_.at(word).erase(document_id);
+        word_to_document_freqs_.at(word.data()).erase(document_id);
     }
 
     id_to_word_freqs_.erase(document_id);
     documents_.erase(document_id);
 
     auto iterator = find(begin(), end(), document_id);
+    document_ids_.erase(iterator);
+}
+
+void SearchServer::RemoveDocument(execution::sequenced_policy, int document_id) {
+    RemoveDocument(document_id);
+}
+
+void SearchServer::RemoveDocument(execution::parallel_policy, int document_id) {
+    auto it = id_to_word_freqs_.find(document_id);
+    if (it == id_to_word_freqs_.end()) return;
+    
+    for_each (execution::par, it->second.begin(), it->second.end(), [&](const auto& word_to_id) {
+        word_to_document_freqs_.at(word_to_id.first.data()).erase(document_id);
+    });
+
+    id_to_word_freqs_.erase(document_id);
+    documents_.erase(document_id);
+
+    auto iterator = find(execution::par, begin(), end(), document_id);
     document_ids_.erase(iterator);
 }
 
