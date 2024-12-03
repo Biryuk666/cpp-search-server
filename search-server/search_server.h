@@ -46,14 +46,16 @@ public:
     int GetDocumentId(int index) const;
 
     std::tuple<std::vector<std::string_view>, DocumentStatus> MatchDocument(std::string_view raw_query, int document_id) const;
-    std::tuple<std::vector<std::string_view>, DocumentStatus> MatchDocument(std::execution::sequenced_policy, std::string_view raw_query, int document_id) const;
-    std::tuple<std::vector<std::string_view>, DocumentStatus> MatchDocument(std::execution::parallel_policy, std::string_view raw_query, int document_id) const;
+
+    template <typename ExecutionPolicy>
+    std::tuple<std::vector<std::string_view>, DocumentStatus> MatchDocument(const ExecutionPolicy& policy, std::string_view raw_query, int document_id) const;
 
     const std::map<std::string_view, double>& GetWordFrequencies(int document_id) const;
 
     void RemoveDocument(int document_id);
-    void RemoveDocument(std::execution::sequenced_policy, int document_id);    
-    void RemoveDocument(std::execution::parallel_policy, int document_id);
+
+    template <typename ExecutionPolicy>
+    void RemoveDocument(const ExecutionPolicy& policy, int document_id);
 
 private:
     struct DocumentData {
@@ -151,4 +153,53 @@ std::vector<Document> SearchServer::FindAllDocuments(const Query& query, Documen
             {document_id, relevance, documents_.at(document_id).rating});
     }
     return matched_documents;
+}
+
+template <typename ExecutionPolicy>
+std::tuple<std::vector<std::string_view>, DocumentStatus> SearchServer::MatchDocument(const ExecutionPolicy& policy, std::string_view raw_query, int document_id) const {
+    if (std::is_same_v<std::decay_t<ExecutionPolicy>, std::execution::sequenced_policy>) {
+        return MatchDocument(raw_query, document_id);
+    }
+
+    if (id_to_word_freqs_.find(document_id) == id_to_word_freqs_.end()) {
+        throw std::out_of_range("Invalid document id"s);
+    }
+    const auto query = ParseQuery(raw_query.data());
+
+    std::vector<std::string_view> matched_words;
+    for_each (policy, query.plus_words.begin(), query.plus_words.end(), [&](const auto& word) {
+        auto it = word_to_document_freqs_.find(word);
+        if (it != word_to_document_freqs_.end() && it->second.find(document_id) != it->second.end()) {
+            matched_words.push_back(word);
+        }
+    });
+
+    for_each (policy, query.minus_words.begin(), query.minus_words.end(), [&](const auto& word) {
+        auto it = word_to_document_freqs_.find(word);
+        if (it != word_to_document_freqs_.end() && it->second.find(document_id) != it->second.end()) {
+            matched_words.clear();
+        }
+    });
+
+    return {matched_words, documents_.at(document_id).status};
+}
+
+template <typename ExecutionPolicy>
+void SearchServer::RemoveDocument(const ExecutionPolicy& policy, int document_id) {
+    if (std::is_same_v<std::decay_t<ExecutionPolicy>, std::execution::sequenced_policy>) {
+        RemoveDocument(document_id);
+    } else {
+        auto it = id_to_word_freqs_.find(document_id);
+        if (it == id_to_word_freqs_.end()) return;
+        
+        for_each (policy, it->second.begin(), it->second.end(), [&](const auto& word_to_id) {
+            word_to_document_freqs_.at(word_to_id.first.data()).erase(document_id);
+        });
+
+        id_to_word_freqs_.erase(document_id);
+        documents_.erase(document_id);
+
+        auto iterator = find(policy, begin(), end(), document_id);
+        document_ids_.erase(iterator);
+    }
 }
